@@ -147,15 +147,16 @@ function isCourier(username) { return !!COURIERS[username]; }
 
 // ================= Клиенты =================
 async function addOrUpdateClient(username, first_name, chat_id) {
-  const now = new Date().toISOString();
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
   await db.execute(`
     INSERT INTO clients (username, first_name, subscribed, created_at, last_active, chat_id)
     VALUES (?, ?, 1, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
-      first_name=VALUES(first_name),
-      last_active=VALUES(last_active),
-      chat_id=VALUES(chat_id),
-      subscribed=1
+      first_name = VALUES(first_name),
+      last_active = VALUES(last_active),
+      chat_id = VALUES(chat_id),
+      subscribed = 1
   `, [username, first_name, now, now, chat_id]);
 }
 
