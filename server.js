@@ -1205,42 +1205,43 @@ if (text === "Статистика" && id === ADMIN_ID) {
 
 
   // ===== Рассылка =====
-  // ===== Рассылка =====
 if (text === "Рассылка" && id === ADMIN_ID) {
   await bot.sendMessage(ADMIN_ID, "Введите текст для рассылки:");
   adminWaitingBroadcast.set(username, true);
-   console.log(`Админ @${username} начал рассылку, ожидаем текст`);
+  console.log(`Админ @${username} начал рассылку, ожидаем текст`);
   return;
 }
 
 if (adminWaitingBroadcast.has(username)) {
   const msgText = text;
 
-  const allClients = db
-    .prepare("SELECT chat_id FROM clients WHERE subscribed=1 AND chat_id IS NOT NULL")
-    .all();
+  // Получаем всех подписанных клиентов из MySQL
+  const [allClients] = await db.execute(
+    "SELECT chat_id, username FROM clients WHERE subscribed=1 AND chat_id IS NOT NULL"
+  );
 
-  console.log(`Начало рассылки от @${username},текст: "${msgText}"`);
+  console.log(`Начало рассылки от @${username}, текст: "${msgText}"`);
   console.log(`Всего получателей: ${allClients.length}`);
-
 
   let successCount = 0;
 
+  // Используем for...of и await, чтобы не было проблем с промисами
   for (const c of allClients) {
     try {
       await bot.sendMessage(c.chat_id, msgText);
       successCount++;
       console.log(`Отправлено пользователю chat_id: ${c.chat_id}`);
     } catch (err) {
-      console.error("Broadcast error:", err.message);
+      console.error(`Ошибка при отправке @${c.username} (chat_id: ${c.chat_id}):`, err.message);
     }
   }
 
   await bot.sendMessage(
     ADMIN_ID,
-    `Рассылка отправлена\nПолучателей: ${successCount}`
+    `Рассылка завершена\nУспешно отправлено: ${successCount}`
   );
 
+  // Сбрасываем ожидание текста рассылки
   adminWaitingBroadcast.delete(username);
   return;
 }
