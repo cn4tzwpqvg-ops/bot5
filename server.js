@@ -23,9 +23,10 @@ const waitingReview = new Map();
 // ================= Глобальные переменные =================
 let db;
 let COURIERS = {};
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(TOKEN);
 bot.deleteWebHook().catch(() => {});
 bot.on("polling_error", (err) => console.error("Polling error:", err));
+
 
 // ================= Инициализация БД =================
 async function initDB() {
@@ -246,16 +247,17 @@ async function restoreOrdersForCouriers() {
   }
   console.log("Восстановление заказов для курьеров завершено");
 }
-
-// ================= Main =================
 (async function main() {
   await initDB();
   COURIERS = await getCouriers();
   await addCourier(ADMIN_USERNAME, ADMIN_ID);
   await restoreOrdersForClients();
   await restoreOrdersForCouriers();
+
+  bot.startPolling();
   console.log("Бот и сервер запущены");
 })();
+
 
 // ================= Транзакция для отмены заказа =================
 async function releaseOrderTx(orderId) {
@@ -635,62 +637,65 @@ if (data.startsWith("delivered_")) {
 
 
 
-
 // ================== /start ==================
-// ================== /start ==================
-// ================== /start ==================
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
   const id = msg.from.id;
   const username = msg.from.username || `id${id}`;
   const first_name = msg.from.first_name || "";
-  // =========================
+
   // 🔹 Логирование старта
   console.log(` /start от @${username} (id: ${id}), имя: ${first_name}`);
 
-  // Сохраняем или обновляем клиента (теперь с chat_id)
-  addOrUpdateClient(username, first_name, id);
-  console.log(`Клиент @${username} добавлен/обновлён в базе`);
+  try {
+    // Сохраняем или обновляем клиента
+    await addOrUpdateClient(username, first_name, id);
+    console.log(`Клиент @${username} добавлен/обновлён в базе`);
 
-  // Если курьер, сохраняем в таблицу couriers и обновляем COURIERS
-  if (isCourier(username)) {
-    db.prepare("INSERT INTO couriers (username, chat_id) VALUES (?, ?) ON CONFLICT(username) DO UPDATE SET chat_id=excluded.chat_id").run(username, id);
-    COURIERS = getCouriers(); // обновляем локальный объект курьеров
-   console.log(`Курьер @${username} добавлен/обновлён, chat_id: ${id}`);
-  }
+    // Если курьер, сохраняем в таблицу couriers и обновляем COURIERS
+    if (await isCourier(username)) {
+      await db.execute(
+        `INSERT INTO couriers (username, chat_id)
+         VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE chat_id = VALUES(chat_id)`,
+        [username, id]
+      );
+      COURIERS = await getCouriers(); // обновляем локальный объект курьеров
+      console.log(`Курьер @${username} добавлен/обновлён, chat_id: ${id}`);
+    }
 
-  let welcomeText = "Добро пожаловать! Чтобы оформить заказ нажмите кнопку снизу открыть магазин.";
-  let keyboard = [];
+    // Формируем приветственное сообщение и клавиатуру
+    let welcomeText = "Добро пожаловать! Чтобы оформить заказ нажмите кнопку снизу открыть магазин.";
+    let keyboard = [];
 
-  if (username === ADMIN_USERNAME) {
-    welcomeText += "\nПанель администратора и Панель курьера доступны через текстовые кнопки ниже.";
-    keyboard = [[{ text: "Панель администратора" }, { text: "Панель курьера" }]];
-    console.log(`Админ @${username} видит админ меню`);
-  } else if (isCourier(username)) {
-    welcomeText += "\nПанель курьера доступна через текстовые кнопки ниже.";
-    keyboard = [
-      [{ text: "Личный кабинет" }, { text: "Поддержка" }],
-      [{ text: "Панель курьера" }]
-    ];
-    console.log(`Курьер @${username} видит курьерское меню`);
-  } else {
-  keyboard = [
-    [{ text: "Личный кабинет" }, { text: "Поддержка" }],
-    [{ text: "Мои заказы" }] // Добавляем кнопку для просмотра заказов
-  ];
-  console.log(`Пользователь @${username} видит обычное меню с кнопкой "Мои заказы"`);
-}
+    if (username === ADMIN_USERNAME) {
+      welcomeText += "\nПанель администратора и Панель курьера доступны через текстовые кнопки ниже.";
+      keyboard = [[{ text: "Панель администратора" }, { text: "Панель курьера" }]];
+      console.log(`Админ @${username} видит админ меню`);
+    } else if (await isCourier(username)) {
+      welcomeText += "\nПанель курьера доступна через текстовые кнопки ниже.";
+      keyboard = [
+        [{ text: "Личный кабинет" }, { text: "Поддержка" }],
+        [{ text: "Панель курьера" }]
+      ];
+      console.log(`Курьер @${username} видит курьерское меню`);
+    } else {
+      keyboard = [
+        [{ text: "Личный кабинет" }, { text: "Поддержка" }],
+        [{ text: "Мои заказы" }]
+      ];
+      console.log(`Пользователь @${username} видит обычное меню с кнопкой "Мои заказы"`);
+    }
 
+    // Отправляем сообщение
+    await bot.sendMessage(id, welcomeText, {
+      reply_markup: { keyboard, resize_keyboard: true }
+    });
 
-   // Отправляем сообщение
-  bot.sendMessage(id, welcomeText, {
-    reply_markup: { keyboard, resize_keyboard: true }
-  }).then(() => {
     console.log(`Приветственное сообщение отправлено @${username}`);
-  }).catch(err => {
-    console.error(`Ошибка отправки /start для @${username}:`, err.message);
-  });
+  } catch (err) {
+    console.error(`Ошибка обработки /start для @${username}:`, err.message);
+  }
 });
-
 
 
 // ================== Панель курьера и админка ==================
@@ -754,40 +759,36 @@ if (waitingReview.has(id)) {
     return bot.sendMessage(id, "Слишком короткий отзыв, напишите хотя бы несколько слов");
   }
 
-
 // ===== добавляем колонки rating и review_text в reviews, если ещё нет =====
 try {
-  db.prepare(`ALTER TABLE reviews ADD COLUMN rating INTEGER`).run();
+  await db.execute("ALTER TABLE reviews ADD COLUMN rating INT");
   console.log("rating добавлен в reviews");
 } catch (e) {
   console.log("rating уже существует в reviews");
 }
 
 try {
-  db.prepare(`ALTER TABLE reviews ADD COLUMN review_text TEXT`).run();
+  await db.execute("ALTER TABLE reviews ADD COLUMN review_text TEXT");
   console.log("review_text добавлен в reviews");
 } catch (e) {
   console.log("review_text уже существует в reviews");
 }
-  // сохраняем отзыв + рейтинг
-  db.prepare(`
-    INSERT INTO reviews (
-      order_id,
-      client_username,
-      courier_username,
-      rating,
-      review_text,
-      created_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    review.orderId,
-    review.client,
-    review.courier,
-    review.rating,      // 
-    reviewText,
-    new Date().toISOString()
-  );
+
+// ===== сохраняем отзыв + рейтинг =====
+const now = new Date().toISOString().slice(0, 19).replace("T", " "); // MySQL DATETIME
+
+await db.execute(
+  `INSERT INTO reviews (
+     order_id,
+     client_username,
+     courier_username,
+     rating,
+     review_text,
+     created_at
+   ) VALUES (?, ?, ?, ?, ?, ?)`,
+  [review.orderId, review.client, review.courier, review.rating, reviewText, now]
+);
+
 console.log(
   `Отзыв сохранён: заказ ${review.orderId}, ` +
   `рейтинг ${review.rating}, ` +
@@ -839,24 +840,30 @@ if (adminWaitingOrdersCourier.has(username)) {
     return bot.sendMessage(id, "Пожалуйста, введите ник курьера, например @username");
   }
 
-  // Проверка существования курьера
-  const courierExists = db.prepare("SELECT 1 FROM couriers WHERE username=?").get(selectedCourier);
-  if (!courierExists) {
-    return bot.sendMessage(id, `Курьер @${selectedCourier} не найден`);
-  }
+ // Проверка существования курьера
+const [rows] = await db.execute("SELECT 1 FROM couriers WHERE username = ?", [selectedCourier]);
+
+if (rows.length === 0) {
+  return bot.sendMessage(id, `Курьер @${selectedCourier} не найден`);
+}
 
   // Получаем состояние просмотра: "active" или "done"
   const state = adminWaitingOrdersCourier.get(username);
   const showDone = state.type === "done";
 
-  // Получаем заказы в зависимости от типа
-  const orders = showDone
-    ? db.prepare("SELECT * FROM orders WHERE status='delivered' AND courier_username=?").all(selectedCourier)
-    : db.prepare("SELECT * FROM orders WHERE status IN ('new','taken') AND courier_username=?").all(selectedCourier);
+// Получаем заказы в зависимости от типа
+const query = showDone
+  ? "SELECT * FROM orders WHERE status='delivered' AND courier_username=?"
+  : "SELECT * FROM orders WHERE status IN ('new','taken') AND courier_username=?";
 
-  if (orders.length === 0) {
-    return bot.sendMessage(id, `Курьер @${selectedCourier} пока не имеет ${showDone ? "выполненных" : "активных"} заказов`);
-  }
+const [orders] = await db.execute(query, [selectedCourier]);
+
+if (orders.length === 0) {
+  return bot.sendMessage(
+    id,
+    `Курьер @${selectedCourier} пока не имеет ${showDone ? "выполненных" : "активных"} заказов`
+  );
+}
 
   // Отправка заказов параллельно
   await bot.sendMessage(id, `${showDone ? "Выполненные" : "Активные"} заказы курьера @${selectedCourier}:`);
@@ -879,15 +886,21 @@ if (adminWaitingCourier.has(username) && menuCommands.includes(text)) {
   console.log(`Состояние ожидания ника сброшено для @${username} из-за меню`);
 }
 
-  // ===== Просмотр всех курьеров (кнопка 📈 Курьеры) =====
+// ===== Просмотр всех курьеров (кнопка 📈 Курьеры) =====
 if (text === "Курьеры" && id === ADMIN_ID) {
-  const couriers = db.prepare("SELECT username, chat_id FROM couriers").all();
+  // Получаем список курьеров из MySQL
+  const [couriers] = await db.execute("SELECT username, chat_id FROM couriers");
+  
   if (couriers.length === 0) return bot.sendMessage(id, "Нет курьеров");
   
-  const list = couriers.map(c => `@${c.username} — chat_id: ${c.chat_id || "неизвестно"}`).join("\n");
+  const list = couriers
+    .map(c => `@${c.username} — chat_id: ${c.chat_id || "неизвестно"}`)
+    .join("\n");
+
   console.log(`Админ @${username} запросил список курьеров`);
   return bot.sendMessage(id, "Список курьеров:\n" + list);
 }
+
 
 
   // Добавляем или обновляем клиента
@@ -931,16 +944,29 @@ if (text === "Назад") {
 }
 
 
-  // ===== Личный кабинет =====
-  if (text === "Личный кабинет") {
+// ===== Личный кабинет =====
+if (text === "Личный кабинет") {
+  try {
+    // Получаем количество заказов пользователя
+    const [[{ cnt: totalOrders }]] = await db.execute(
+      "SELECT COUNT(*) AS cnt FROM orders WHERE tgNick = ?",
+      [username]
+    );
+
     const info = [
       `Имя: ${client.first_name || "—"}`,
       `Город: ${client.city || "—"}`,
       `Последняя активность: ${client.last_active || "—"}`,
-      `Всего заказов: ${db.prepare("SELECT COUNT(*) as cnt FROM orders WHERE tgNick=?").get(username).cnt}`
+      `Всего заказов: ${totalOrders || 0}`
     ].join("\n");
+
     return bot.sendMessage(id, info);
+  } catch (err) {
+    console.error(`Ошибка получения данных личного кабинета для @${username}:`, err.message);
+    return bot.sendMessage(id, "Ошибка при получении информации о личном кабинете.");
   }
+}
+
 
   // ===== Поддержка =====
   if (text === "Поддержка") {
@@ -1109,19 +1135,25 @@ if (adminWaitingCourier.has(username)) {
   return;
 }
 
+// ===== Список курьеров =====
+if (text === "Список курьеров" && id === ADMIN_ID) {
+  adminWaitingCourier.delete(username); // убираем ожидание ника
 
-  // ===== Список курьеров =====
-  if (text === "Список курьеров" && id === ADMIN_ID) {
-    adminWaitingCourier.delete(username); // убираем ожидание ника
-    const couriers = db.prepare("SELECT username FROM couriers").all();
-    let list = couriers.map(c => `@${c.username}`);
-    if (list.length === 0) list = ["Нет курьеров"];
-    return bot.sendMessage(ADMIN_ID, "Список курьеров:\n" + list.join("\n"));
+  // Получаем список курьеров из MySQL
+  const [couriers] = await db.execute("SELECT username FROM couriers");
+
+  let list = couriers.map(c => `@${c.username}`);
+  if (list.length === 0) list = ["Нет курьеров"];
+
+  return bot.sendMessage(ADMIN_ID, "Список курьеров:\n" + list.join("\n"));
 }
+
 
 // ===== Выбор курьера и просмотр его заказов =====
 if (text === "Заказы курьера" && id === ADMIN_ID) {
-  const couriers = db.prepare("SELECT username FROM couriers").all();
+  // Получаем список курьеров из MySQL
+  const [couriers] = await db.execute("SELECT username FROM couriers");
+  
   if (couriers.length === 0) {
     return bot.sendMessage(id, "Нет курьеров для выбора");
   }
@@ -1137,10 +1169,9 @@ if (text === "Заказы курьера" && id === ADMIN_ID) {
   adminWaitingOrdersCourier.set(username, { type: "active" });
   return;
 }
-
 // ===== Выполненные заказы (выбор курьера) =====
 if (text === "Выполненные заказы" && id === ADMIN_ID) {
-  const couriers = db.prepare("SELECT username FROM couriers").all();
+  const [couriers] = await db.execute("SELECT username FROM couriers");
   if (couriers.length === 0) return bot.sendMessage(id, "Нет курьеров для выбора");
 
   const keyboard = couriers.map(c => [{ text: `@${c.username}` }]);
@@ -1154,21 +1185,21 @@ if (text === "Выполненные заказы" && id === ADMIN_ID) {
   });
 }
 
-  // ===== Статистика заказов =====
+// ===== Статистика заказов =====
 if (text === "Статистика" && id === ADMIN_ID) {
-  const total = db.prepare("SELECT COUNT(*) c FROM orders").get().c;
-  const newO = db.prepare("SELECT COUNT(*) c FROM orders WHERE status='new'").get().c;
-  const taken = db.prepare("SELECT COUNT(*) c FROM orders WHERE status='taken'").get().c;
-  const delivered = db.prepare("SELECT COUNT(*) c FROM orders WHERE status='delivered'").get().c;
+  const [[{ c: total }]] = await db.execute("SELECT COUNT(*) AS c FROM orders");
+  const [[{ c: newO }]] = await db.execute("SELECT COUNT(*) AS c FROM orders WHERE status='new'");
+  const [[{ c: taken }]] = await db.execute("SELECT COUNT(*) AS c FROM orders WHERE status='taken'");
+  const [[{ c: delivered }]] = await db.execute("SELECT COUNT(*) AS c FROM orders WHERE status='delivered'");
 
   return bot.sendMessage(
     id,
     `Статистика заказов
 
- Всего: ${total}
- Новые: ${newO}
- Взяты: ${taken}
- Доставлены: ${delivered}`
+Всего: ${total}
+Новые: ${newO}
+Взяты: ${taken}
+Доставлены: ${delivered}`
   );
 }
 
@@ -1240,22 +1271,22 @@ if (
     `${isActive ? "Активные" : "Выполненные"} заказы курьера @${username} (id: ${id})`
   );
 
-  // Получаем заказы ТОЛЬКО этого курьера
-  const orders = db.prepare(
-    isActive
-      ? "SELECT * FROM orders WHERE status='new' OR (status='taken' AND courier_username=?)"
-      : "SELECT * FROM orders WHERE status='delivered' AND courier_username=?"
-  ).all(username);
+// Получаем заказы ТОЛЬКО этого курьера
+const query = isActive
+  ? "SELECT * FROM orders WHERE status='new' OR (status='taken' AND courier_username=?)"
+  : "SELECT * FROM orders WHERE status='delivered' AND courier_username=?";
 
-  console.log(`Найдено заказов: ${orders.length}`);
+const [orders] = await db.execute(query, [username]);
 
-  if (orders.length === 0) {
-    console.log(`Нет ${isActive ? "активных" : "выполненных"} заказов у курьера`);
-    return bot.sendMessage(
-      id,
-      ` Нет ${isActive ? "активных" : "выполненных"} заказов`
-    );
-  }
+console.log(`Найдено заказов: ${orders.length}`);
+
+if (orders.length === 0) {
+  console.log(`Нет ${isActive ? "активных" : "выполненных"} заказов у курьера`);
+  return bot.sendMessage(
+    id,
+    `Нет ${isActive ? "активных" : "выполненных"} заказов`
+  );
+}
 
   // Отправляем все заказы
   await Promise.all(
