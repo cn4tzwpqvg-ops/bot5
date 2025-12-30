@@ -703,8 +703,19 @@ bot.onText(/\/start/, async (msg) => {
 });
 
 // ================== Панель курьера и админка ==================
-const adminWaitingCourier = new Map(); // username => { action }
-const adminWaitingBroadcast = new Map(); // username => true
+const adminWaitingCourier = new Map(); 
+const adminWaitingBroadcast = new Map(); 
+
+(async () => {
+  try {
+    await db.execute("ALTER TABLE clients ADD COLUMN banned TINYINT(1) DEFAULT 0");
+    console.log("Колонка banned добавлена в clients");
+  } catch (e) {
+    console.log("Колонка banned уже существует");
+  }
+})();
+
+
 
 // ===== Основной обработчик сообщений =====
 bot.on("message", async (msg) => {
@@ -713,6 +724,22 @@ bot.on("message", async (msg) => {
   const first_name = msg.from.first_name || "";
   if (!msg.text) return;
 const text = msg.text.trim();
+
+// ===== Проверка бана =====
+try {
+  const [userRows] = await db.execute(
+    "SELECT banned FROM clients WHERE username = ?",
+    [username]
+  );
+  if (userRows[0] && userRows[0].banned) {
+    // Пользователь забанен — ничего не может писать
+    return bot.sendMessage(id, "Вы заблокированы и не можете использовать бота.");
+  }
+} catch (err) {
+  console.error(`Ошибка проверки бана для @${username}:`, err.message);
+}
+
+
 
  console.log(
     " MESSAGE",
@@ -945,6 +972,27 @@ if (text === "Назад") {
       resize_keyboard: true
     }
   });
+}
+
+
+// ===== Команды бан/разбан =====
+if (text.startsWith("/ban ") && id === ADMIN_ID) {
+  const uname = text.replace("/ban ", "").replace(/^@/, "").trim();
+  await db.execute("UPDATE clients SET banned = 1 WHERE username = ?", [uname]);
+  return bot.sendMessage(ADMIN_ID, `Пользователь @${uname} забанен`);
+}
+
+if (text.startsWith("/unban ") && id === ADMIN_ID) {
+  const uname = text.replace("/unban ", "").replace(/^@/, "").trim();
+  await db.execute("UPDATE clients SET banned = 0 WHERE username = ?", [uname]);
+  return bot.sendMessage(ADMIN_ID, `Пользователь @${uname} разбанен`);
+}
+
+if (text === "/banned" && id === ADMIN_ID) {
+  const [rows] = await db.execute("SELECT username FROM clients WHERE banned = 1");
+  if (rows.length === 0) return bot.sendMessage(ADMIN_ID, "Нет забаненных пользователей");
+  const list = rows.map(r => `@${r.username}`).join("\n");
+  return bot.sendMessage(ADMIN_ID, "Забаненные пользователи:\n" + list);
 }
 
 
