@@ -636,7 +636,6 @@ if (data.startsWith("delivered_")) {
 // ... остальной код меню, панель курьера, админка, рассылки и API без изменений
 
 
-
 // ================== /start ==================
 bot.onText(/\/start/, async (msg) => {
   const id = msg.from.id;
@@ -669,7 +668,13 @@ bot.onText(/\/start/, async (msg) => {
 
     if (username === ADMIN_USERNAME) {
       welcomeText += "\nПанель администратора и Панель курьера доступны через текстовые кнопки ниже.";
-      keyboard = [[{ text: "Панель администратора" }, { text: "Панель курьера" }]];
+      keyboard = [
+        [{ text: "Статистика" }, { text: "Курьеры" }],
+        [{ text: "Добавить курьера" }, { text: "Удалить курьера" }],
+        [{ text: "Список курьеров" }, { text: "Все пользователи" }],
+        [{ text: "Рассылка" }, { text: "Выполненные заказы" }],
+        [{ text: "Назад" }]
+      ];
       console.log(`Админ @${username} видит админ меню`);
     } else if (await isCourier(username)) {
       welcomeText += "\nПанель курьера доступна через текстовые кнопки ниже.";
@@ -696,7 +701,6 @@ bot.onText(/\/start/, async (msg) => {
     console.error(`Ошибка обработки /start для @${username}:`, err.message);
   }
 });
-
 
 // ================== Панель курьера и админка ==================
 const adminWaitingCourier = new Map(); // username => { action }
